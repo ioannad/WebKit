@@ -1579,7 +1579,7 @@ auto OMGIRGenerator::addTableSet(unsigned tableIndex, ExpressionType index, Expr
 auto OMGIRGenerator::addRefFunc(FunctionSpaceIndex index, ExpressionType& result) -> PartialResult
 {
     // FIXME: Emit this inline <https://bugs.webkit.org/show_bug.cgi?id=198506>.
-    result = push(callWasmOperation(m_currentBlock, B3::Int64, operationWasmRefFunc,
+    result = push(callWasmOperation(m_currentBlock, wasmRefType(), operationWasmRefFunc,
         instanceValue(), constant(toB3Type(Types::I32), index)));
     TRACE_VALUE(Wasm::Types::Funcref, get(result), "ref_func ", index);
     return { };
@@ -3013,7 +3013,7 @@ auto OMGIRGenerator::addRefI31(ExpressionType value, ExpressionType& result) -> 
     Value* shiftLeft = m_currentBlock->appendNew<Value>(m_proc, B3::Shl, origin(), masked, constant(Int32, 0x1));
     Value* shiftRight = m_currentBlock->appendNew<Value>(m_proc, B3::SShr, origin(), shiftLeft, constant(Int32, 0x1));
     Value* extended = m_currentBlock->appendNew<Value>(m_proc, B3::ZExt32, origin(), shiftRight);
-    result = push(m_currentBlock->appendNew<Value>(m_proc, B3::BitOr, origin(), extended, constant(Int64, JSValue::NumberTag)));
+    result = push(m_currentBlock->appendNew<Value>(m_proc, B3::BitOr, origin(), extended, constant(wasmRefType(), JSValue::NumberTag)));
 
     return { };
 }
