@@ -4329,7 +4329,7 @@ auto OMGIRGenerator::addElse(ControlData& data, const Stack& currentStack) -> Pa
 auto OMGIRGenerator::addElseToUnreachable(ControlData& data) -> PartialResult
 {
     ASSERT(data.blockType() == BlockType::If);
-    m_stackSize = data.stackSize() + data.signature().m_signature->argumentCount();
+    m_stackSize = data.stackSize() + data.m_signature.m_signature->argumentCount();
     m_currentBlock = data.special;
     data.convertIfToBlock();
     TRACE_CF("ELSE");
