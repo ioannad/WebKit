@@ -6085,10 +6085,9 @@ Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Compilati
         procedure.setShouldDumpIR();
 
     procedure.setNeedsPCToOriginMap();
-    procedure.setOriginPrinter([] (PrintStream& out, Origin origin) {
-        if (!origin)
-            return;
-        out.print("Wasm: ", origin);
+    procedure.setOriginPrinter([](PrintStream& out, Origin origin) {
+        if (auto* impl = origin.maybeOMGOrigin())
+            out.print("Wasm: ", impl->m_opcodeOrigin, " CallSiteIndex: ", impl->m_callSiteIndex.bits());
     });
 
     // This means we cannot use either StackmapGenerationParams::usedRegisters() or
