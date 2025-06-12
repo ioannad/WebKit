@@ -4254,6 +4254,8 @@ auto OMGIRGenerator::addLoop(BlockSignature signature, Stack& enclosingStack, Co
             auto& data = m_parser->controlStack()[controlIndex].controlData;
             auto& expressionStack = m_parser->controlStack()[controlIndex].enclosedExpressionStack;
             connectControlAtEntrypoint(LoadI64, indexInBuffer, pointer, data, expressionStack, block);
+            if (Options::useWasmIPInt() && ControlType::isTry(data))
+                ++indexInBuffer;
         }
         connectControlAtEntrypoint(LoadI64, indexInBuffer, pointer, block, enclosingStack, block);
         connectControlAtEntrypoint(LoadI64, indexInBuffer, pointer, block, newStack, block, true);
