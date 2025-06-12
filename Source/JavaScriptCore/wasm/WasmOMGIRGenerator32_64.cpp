@@ -5635,11 +5635,6 @@ auto OMGIRGenerator::emitInlineDirectCall(FunctionCodeIndex calleeFunctionIndex,
     ASSERT(&irGenerator.m_proc == &m_proc);
 
     dataLogLnIf(WasmOMGIRGeneratorInternal::verboseInlining, "Block ", *m_currentBlock, " is going to do an inline call to block ", *irGenerator.m_topLevelBlock, " then continue at ", *continuation);
-
-    m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Store, origin(),
-        m_currentBlock->appendIntConstant(m_proc, origin(), Int32, firstInlineCallSiteIndex),
-        framePointer(), safeCast<int32_t>(CallFrameSlot::argumentCountIncludingThis * sizeof(Register) + TagOffset));
-
     m_currentBlock->appendNewControlValue(m_proc, B3::Jump, origin(), FrequentedBlock(irGenerator.m_topLevelBlock));
     m_currentBlock = continuation;
 
@@ -5647,10 +5642,7 @@ auto OMGIRGenerator::emitInlineDirectCall(FunctionCodeIndex calleeFunctionIndex,
         resultList.append(push(m_currentBlock->appendNew<VariableValue>(m_proc, B3::Get, origin(), irGenerator.m_inlinedResults[i])));
 
     auto lastInlineCallSiteIndex = advanceCallSiteIndex();
-
-    m_currentBlock->appendNew<B3::MemoryValue>(m_proc, B3::Store, origin(),
-        m_currentBlock->appendIntConstant(m_proc, origin(), Int32, advanceCallSiteIndex()),
-        framePointer(), safeCast<int32_t>(CallFrameSlot::argumentCountIncludingThis * sizeof(Register) + TagOffset));
+    advanceCallSiteIndex();
     m_callee->addCodeOrigin(firstInlineCallSiteIndex, lastInlineCallSiteIndex, m_info, calleeFunctionIndex + m_numImportFunctions);
 
     dataLogLnIf(WasmOMGIRGeneratorInternal::verboseInlining, "Inlining CallSiteIndex range: ", firstInlineCallSiteIndex, " -> ", lastInlineCallSiteIndex, " [", m_inlineDepth, "]");
