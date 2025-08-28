@@ -221,9 +221,15 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
         const auto& omgCallee = *static_cast<const Wasm::OptimizingJITCallee*>(&wasmCallee);
         bool isInlined = false;
 
+        uintptr_t returnPCValue = std::bit_cast<uintptr_t>(removeCodePtrTag<void*>(m_frame.m_returnPC));
+
+        if (!returnPCValue)
+            returnPCValue = std::bit_cast<uintptr_t>(removeCodePtrTag<void*>(callFrame->rawReturnPC()));
+        ASSERT(returnPCValue);
+
         // Because PC is just after the call instruction, to query to the origin for the call instruction, we decrease it by 1.
         // While it can be pointing at the broken offset (e.g. all ARM64 instructions are 4-byte aligned), it is still fine since map is controlling pc with range.
-        auto callSiteIndexFromPC = omgCallee.tryGetCallSiteIndex(std::bit_cast<void*>(std::bit_cast<uintptr_t>(removeCodePtrTag<void*>(m_frame.m_returnPC)) - 1));
+        auto callSiteIndexFromPC = omgCallee.tryGetCallSiteIndex(std::bit_cast<void*>(returnPCValue - 1));
         CallSiteIndex callSiteIndex = callSiteIndexFromPC.value_or(callFrame->callSiteIndex());
 
         auto codeOrigin = omgCallee.getCodeOrigin(callSiteIndex.bits(), depth, isInlined);
