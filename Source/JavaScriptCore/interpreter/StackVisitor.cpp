@@ -224,10 +224,11 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
 
         const auto& omgCallee = uncheckedDowncast<const Wasm::OptimizingJITCallee>(wasmCallee);
         bool isInlined = false;
+        bool isOMGTailCallInlinedOrigin = false;
 
         // Because PC is just after the call instruction, to query to the origin for the call instruction, we decrease it by 1.
         // While it can be pointing at the broken offset (e.g. all ARM64 instructions are 4-byte aligned), it is still fine since map is controlling pc with range.
-        auto callSiteIndexFromPC = omgCallee.tryGetCallSiteIndex(std::bit_cast<void*>(std::bit_cast<uintptr_t>(removeCodePtrTag<void*>(m_frame.m_returnPC)) - 1));
+        auto callSiteIndexFromPC = omgCallee.tryGetCallSiteIndex(std::bit_cast<void*>(std::bit_cast<uintptr_t>(removeCodePtrTag<void*>(m_frame.m_returnPC)) - 1), isOMGTailCallInlinedOrigin);
         RELEASE_ASSERT(callSiteIndexFromPC);
         CallSiteIndex callSiteIndex = callSiteIndexFromPC.value();
         m_frame.m_wasmCallSiteIndexBits = callSiteIndex.bits();
@@ -236,6 +237,9 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
         auto indexOrName = omgCallee.getIndexOrName(codeOrigin);
         if (!isInlined)
             return;
+        if (isOMGTailCallInlinedOrigin) {
+            dataLogLn("------ INLINED TAIL CALL ORIGIN FOUND ------");
+        }
 
         // The callerFrame just needs to be non-null to indicate that we
         // haven't reached the last frame yet.
