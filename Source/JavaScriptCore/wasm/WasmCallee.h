@@ -245,7 +245,7 @@ public:
     const WasmCodeOrigin* getCodeOrigin(unsigned csi, unsigned depth, bool& isInlined) const;
     IndexOrName getOrigin(unsigned csi, unsigned depth, bool& isInlined) const;
     IndexOrName getIndexOrName(const WasmCodeOrigin*) const;
-    std::optional<CallSiteIndex> tryGetCallSiteIndex(const void*) const;
+    std::optional<CallSiteIndex> tryGetCallSiteIndex(const void*, bool& isOMGTailCallInlinedOrigin) const;
 
     Box<PCToCodeOriginMap> materializePCToOriginMap(B3::PCToOriginMap&&, LinkBuffer&);
 

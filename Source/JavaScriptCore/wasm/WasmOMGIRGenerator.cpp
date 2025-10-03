@@ -773,7 +773,7 @@ public:
     PartialResult WARN_UNUSED_RETURN emitIndirectCall(Value* calleeInstance, Value* calleeCode, Value* boxedCalleeCallee, const TypeDefinition&, const ArgumentList& args, ValueResults&, CallType = CallType::Call);
 
     Vector<ConstrainedValue> createCallConstrainedArgs(BasicBlock*, const CallInformation& wasmCalleeInfo, const ArgumentList&);
-    auto createCallPatchpoint(BasicBlock*, const TypeDefinition&, const CallInformation&, const ArgumentList& tmpArgs) -> CallPatchpointData;
+    auto createCallPatchpoint(BasicBlock*, const TypeDefinition&, const CallInformation&, const ArgumentList& tmpArgs, bool isTailCallInlineCaller) -> CallPatchpointData;
     auto createTailCallPatchpoint(BasicBlock*, const TypeDefinition&, const CallInformation& wasmCallerInfoAsCallee, const CallInformation& wasmCalleeInfoAsCallee, const ArgumentList& tmpArgSourceLocations, Vector<B3::ConstrainedValue> patchArgs) -> CallPatchpointData;
 
     InliningNode* canInline(FunctionSpaceIndex functionIndexSpace, unsigned callProfileIndex) const;
@@ -905,7 +905,7 @@ private:
     RefPtr<PatchpointExceptionHandle> preparePatchpointForExceptions(BasicBlock*, PatchpointValue*);
     void connectValuesForCatchEntrypoint(ControlData& catchData, Value* pointer);
 
-    Origin origin();
+    Origin origin(bool isOMGTailCallInlinedOrigin = false);
 
     ExpressionType getPushVariable(B3::Type type)
     {
@@ -1781,6 +1781,7 @@ void OMGIRGenerator::fillCallResults(Value* callResult, const TypeDefinition& si
 auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, Value* boxedCalleeCallee, const TypeDefinition& signature, const ArgumentList& args, ValueResults& results, CallType callType) -> PartialResult
 {
     const bool isTailCallRootCaller = callType == CallType::TailCall && !m_inlineParent;
+    const bool isTailCallInlineCaller = callType == CallType::TailCall && m_inlineParent;
 
     m_makesCalls = true;
     if (callType == CallType::TailCall)
@@ -1851,7 +1852,7 @@ auto OMGIRGenerator::emitIndirectCall(Value* calleeInstance, Value* calleeCode, 
         return { };
     }
 
-    auto [patchpoint, handle, prepareForCall] = createCallPatchpoint(m_currentBlock, signature, wasmCalleeInfo, args);
+    auto [patchpoint, handle, prepareForCall] = createCallPatchpoint(m_currentBlock, signature, wasmCalleeInfo, args, isTailCallInlineCaller);
     // We need to clobber all potential pinned registers since we might be leaving the instance.
     // We pessimistically assume we're always calling something that is bounds checking so
     // because the wasm->wasm thunk unconditionally overrides the size registers.
@@ -5510,14 +5511,15 @@ Vector<ConstrainedValue> OMGIRGenerator::createCallConstrainedArgs(BasicBlock* b
 }
 
 
-auto OMGIRGenerator::createCallPatchpoint(BasicBlock* block, const TypeDefinition& signature, const CallInformation& wasmCalleeInfo, const ArgumentList& tmpArgs) -> CallPatchpointData
+auto OMGIRGenerator::createCallPatchpoint(BasicBlock* block, const TypeDefinition& signature, const CallInformation& wasmCalleeInfo, const ArgumentList& tmpArgs, bool isTailCallInlineCaller) -> CallPatchpointData
 {
     auto returnType = toB3ResultType(&signature);
 
     auto constrainedPatchArgs = createCallConstrainedArgs(block, wasmCalleeInfo, tmpArgs);
 
     advanceCallSiteIndex();
-    PatchpointValue* patchpoint = m_proc.add<PatchpointValue>(returnType, origin());
+    Origin patchpointOrigin = (isTailCallInlineCaller ? origin(true) : origin());
+    PatchpointValue* patchpoint = m_proc.add<PatchpointValue>(returnType, patchpointOrigin);
     patchpoint->effects.writesPinned = true;
     patchpoint->effects.readsPinned = true;
     patchpoint->clobberEarly(RegisterSetBuilder::macroClobberedGPRs());
@@ -6120,6 +6122,7 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
     }
 
     const bool isTailCallRootCaller = callType == CallType::TailCall && !m_inlineParent;
+    const bool isTailCallInlineCaller = callType == CallType::TailCall && m_inlineParent;
     ASSERT(signature.as<FunctionSignature>()->argumentCount() == args.size());
 
     const auto& callingConvention = wasmCallingConvention();
@@ -6183,7 +6186,7 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
             return { };
         }
 
-        auto [patchpoint, handle, prepareForCall] = createCallPatchpoint(m_currentBlock, signature, wasmCalleeInfo, args);
+        auto [patchpoint, handle, prepareForCall] = createCallPatchpoint(m_currentBlock, signature, wasmCalleeInfo, args, isTailCallInlineCaller);
         emitCallToImport(patchpoint, handle, prepareForCall);
 
         if (returnType != B3::Void)
@@ -6240,7 +6243,7 @@ auto OMGIRGenerator::emitDirectCall(unsigned callProfileIndex, FunctionSpaceInde
     // 1. It is not tail-call. So this does not clobber the arguments of this function.
     // 2. We are not changing instance. Thus, |this| of this function's arguments are the same and OK.
 
-    auto [patchpoint, handle, prepareForCall] = createCallPatchpoint(m_currentBlock, signature, wasmCalleeInfo, args);
+    auto [patchpoint, handle, prepareForCall] = createCallPatchpoint(m_currentBlock, signature, wasmCalleeInfo, args, isTailCallInlineCaller);
     emitUnlinkedWasmToWasmCall(patchpoint, handle, prepareForCall);
     // We need to clobber the size register since the IPInt always bounds checks
     if (useSignalingMemory() || m_info.memory.isShared())
@@ -6632,7 +6635,7 @@ void OMGIRGenerator::dump(const ControlStack& controlStack, const Stack* express
     dataLogLn();
 }
 
-auto OMGIRGenerator::origin() -> Origin
+auto OMGIRGenerator::origin(bool isOMGTailCallInlinedOrigin) -> Origin
 {
     if (!m_parser)
         return Origin();
@@ -6652,7 +6655,7 @@ auto OMGIRGenerator::origin() -> Origin
     WasmOrigin result { CallSiteIndex(callSiteIndex()), opcodeOrigin };
     if (m_context.origins.isEmpty() || m_context.origins.last() != result)
         m_context.origins.append(result);
-    return Origin(&m_context.origins.last());
+    return Origin(&m_context.origins.last(), isOMGTailCallInlinedOrigin);
 }
 
 static bool shouldDumpIRFor(uint32_t functionIndex)
@@ -6687,7 +6690,7 @@ Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Compilati
     procedure.setNeedsPCToOriginMap();
     procedure.setOriginPrinter([](PrintStream& out, Origin origin) {
         if (auto* impl = origin.maybeWasmOrigin())
-            out.print("Wasm: ", impl->m_opcodeOrigin, " CallSiteIndex: ", impl->m_callSiteIndex.bits());
+            out.print("Wasm: ", impl->m_opcodeOrigin, " CallSiteIndex: ", impl->m_callSiteIndex.bits(), " isOMGTailCallInlinedOrigin: ", origin.isOMGTailCallInlinedOrigin());
     });
 
     // This means we cannot use either StackmapGenerationParams::usedRegisters() or

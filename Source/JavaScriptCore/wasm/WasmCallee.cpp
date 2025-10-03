@@ -345,13 +345,13 @@ IndexOrName OptimizingJITCallee::getOrigin(unsigned csi, unsigned depth, bool& i
     return indexOrName();
 }
 
-std::optional<CallSiteIndex> OptimizingJITCallee::tryGetCallSiteIndex(const void* pc) const
+std::optional<CallSiteIndex> OptimizingJITCallee::tryGetCallSiteIndex(const void* pc , bool& isOMGTailCallInlinedOrigin) const
 {
-    constexpr bool verbose = false;
+    constexpr bool verbose = true;
     if (m_callSiteIndexMap) {
         dataLogLnIf(verbose, "Querying ", RawPointer(pc));
-        if (std::optional<CodeOrigin> codeOrigin = m_callSiteIndexMap->findPC(removeCodePtrTag<void*>(pc))) {
-            dataLogLnIf(verbose, "Found ", *codeOrigin);
+        if (std::optional<CodeOrigin> codeOrigin = m_callSiteIndexMap->findPC(removeCodePtrTag<void*>(pc), isOMGTailCallInlinedOrigin)) {
+            dataLogLnIf(verbose, "Found ", *codeOrigin, " with isOMGTailCallInlinedOrigin: ", isOMGTailCallInlinedOrigin);
             return CallSiteIndex { codeOrigin->bytecodeIndex().offset() };
         }
     }
@@ -375,7 +375,7 @@ const StackMap& OptimizingJITCallee::stackmap(CallSiteIndex callSiteIndex) const
 
 Box<PCToCodeOriginMap> OptimizingJITCallee::materializePCToOriginMap(B3::PCToOriginMap&& originMap, LinkBuffer& linkBuffer)
 {
-    constexpr bool verbose = false;
+    constexpr bool verbose = true;
     ASSERT(originMap.ranges().size());
     dataLogLnIf(verbose, "Materializing PCToOriginMap of size: ", originMap.ranges().size());
     constexpr bool shouldBuildMapping = true;
@@ -383,8 +383,14 @@ Box<PCToCodeOriginMap> OptimizingJITCallee::materializePCToOriginMap(B3::PCToOri
     for (const B3::PCToOriginMap::OriginRange& originRange : originMap.ranges()) {
         B3::Origin b3Origin = originRange.origin;
         if (auto* origin = b3Origin.maybeWasmOrigin()) {
+            // We check whether this is a tail call origin to turn on the tail call marker in CodeOrigin.
+            bool isOMGTailCallInlinedOrigin = false;
+            if (b3Origin.isOMGTailCallInlinedOrigin())
+                isOMGTailCallInlinedOrigin = true;
             // We stash the location into a BytecodeIndex.
-            builder.appendItem(originRange.label, CodeOrigin(BytecodeIndex(origin->m_callSiteIndex.bits())));
+            CodeOrigin codeOrigin = CodeOrigin(BytecodeIndex(origin->m_callSiteIndex.bits()));
+            dataLogLnIf(verbose, "Appending code origin: ", codeOrigin, " with isOMGTailCallInlinedOrigin: ", isOMGTailCallInlinedOrigin);
+            builder.appendItem(originRange.label, codeOrigin, isOMGTailCallInlinedOrigin);
         } else
             builder.appendItem(originRange.label, PCToCodeOriginMapBuilder::defaultCodeOrigin());
     }
@@ -397,8 +403,12 @@ Box<PCToCodeOriginMap> OptimizingJITCallee::materializePCToOriginMap(B3::PCToOri
         for (const B3::PCToOriginMap::OriginRange& originRange : originMap.ranges()) {
             B3::Origin b3Origin = originRange.origin;
             if (auto* origin = b3Origin.maybeWasmOrigin()) {
+                // We check whether this is a tail call origin to turn on the tail call marker in CodeOrigin.
+                bool isOMGTailCallInlinedOrigin = false;
+                if (b3Origin.isOMGTailCallInlinedOrigin())
+                    isOMGTailCallInlinedOrigin = true;
                 // We stash the location into a BytecodeIndex.
-                samplingProfilerBuilder.appendItem(originRange.label, CodeOrigin(BytecodeIndex(origin->m_opcodeOrigin.location())));
+                samplingProfilerBuilder.appendItem(originRange.label, CodeOrigin(BytecodeIndex(origin->m_opcodeOrigin.location())), isOMGTailCallInlinedOrigin);
             } else
                 samplingProfilerBuilder.appendItem(originRange.label, PCToCodeOriginMapBuilder::defaultCodeOrigin());
         }
