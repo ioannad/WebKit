@@ -464,7 +464,11 @@ public:
         using Register = GPRReg;
         static constexpr Register invalidRegister = InvalidGPRReg;
         // FIXME: Make this more precise
+#if USE(JSVALUE32_64)
+        static constexpr unsigned numberOfRegisters = 16;
+#else
         static constexpr unsigned numberOfRegisters = 32;
+#endif
         static constexpr Width defaultWidth = widthForBytes(sizeof(CPURegister));
     };
 
@@ -2043,7 +2047,7 @@ public:
 
     template<typename Func, size_t N>
     void emitCCall(Func function, const Vector<Value, N>& arguments, Value& result);
-
+    void flushLiveGPRsNotInPreserved(int numberOfRegistersToFree, const RegisterSet* dontCountTheseRegisters = nullptr);
     void emitTailCall(FunctionSpaceIndex, const TypeDefinition& signature, ArgumentList& arguments);
     PartialResult WARN_UNUSED_RETURN addCall(unsigned, FunctionSpaceIndex, const TypeDefinition& signature, ArgumentList& arguments, ResultList& results, CallType = CallType::Call);
 

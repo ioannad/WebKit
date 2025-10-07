@@ -228,13 +228,15 @@ FPRReg Location::asFPR() const
 
 GPRReg Location::asGPRlo() const
 {
-    ASSERT(isGPR2());
+    if (!isGPR2())
+        dataLogLn("IS NOT GPR2");
     return m_gprlo;
 }
 
 GPRReg Location::asGPRhi() const
 {
-    ASSERT(isGPR2());
+    if (!isGPR2())
+        dataLogLn("IS NOT GPR2");
     return m_gprhi;
 }
 
@@ -4186,8 +4188,10 @@ void BBQJIT::slowPathSpillBindings(const RegisterBindings& bindings)
     // FIXME: These should be store load pairs.
     for (unsigned i = 0; i < bindings.m_gprBindings.size(); ++i) {
         Value value = bindings.m_gprBindings[i].toValue();
-        if (!value.isNone())
+        if (!value.isNone()) {
+            dataLogLn("Spilling value: ", value);
             emitStore(value.type(), Location::fromGPR(static_cast<GPRReg>(i)), canonicalSlot(value));
+        }
     }
 }
 
@@ -4202,8 +4206,9 @@ void BBQJIT::slowPathRestoreBindings(const RegisterBindings& bindings)
     // FIXME: These should be store load pairs.
     for (unsigned i = 0; i < bindings.m_gprBindings.size(); ++i) {
         Value value = bindings.m_gprBindings[i].toValue();
-        if (!value.isNone())
+        if (!value.isNone()) {
             emitLoad(value.type(), canonicalSlot(value), Location::fromGPR(static_cast<GPRReg>(i)));
+        }
     }
 }
 
@@ -4315,6 +4320,104 @@ void BBQJIT::returnValuesFromCall(Vector<Value, N>& results, const FunctionSigna
     }
 }
 
+#if USE(JSVALUE32_64)
+void BBQJIT::flushLiveGPRsNotInPreserved(int numberOfGPRsToSpill, const RegisterSet* preserved) {
+    // If there are no free GPR registers, flush the amount of live bindings that
+    // we need to allow ScratchScope to find free registers without potentially
+    // messing with GPR2 pairs.
+
+    const bool verbose = true;
+    // Calculate if and how many registers we really need to spill.
+    dataLogLnIf(verbose, "Initial number of GPR registers to spill = ", numberOfGPRsToSpill);
+    size_t numberOfFreeGPRs = m_gprAllocator.freeRegisters().numberOfSetGPRs();
+    dataLogLnIf(verbose, "Number of free GPR registers = ", numberOfFreeGPRs);
+    if (preserved && !preserved->isEmpty()) {
+        size_t numberOfPreservedRegisters = preserved->numberOfSetRegisters();
+        dataLogLnIf(verbose, "Number of preserved registers = ", numberOfPreservedRegisters);
+        if (numberOfFreeGPRs >= (numberOfPreservedRegisters + numberOfGPRsToSpill))
+            return;
+        for (Reg reg : m_gprAllocator.freeRegisters()) {
+            if (!preserved->contains(reg, IgnoreVectors)) {
+                --numberOfGPRsToSpill;
+                if (numberOfGPRsToSpill <= 0)
+                    return;
+            }
+        }
+    } else {
+        numberOfGPRsToSpill -= numberOfFreeGPRs;
+    }
+
+    if (numberOfGPRsToSpill > 0) {
+        dataLogLnIf(verbose, "Attempting to spill ", numberOfGPRsToSpill, " GPR  registers.");
+
+        RegisterBindings bindings;
+        bindings.m_gprBindings = m_gprAllocator.copyBindings();
+        dataLogLnIf(verbose, "Number of live GPR bindings = ", bindings.m_gprBindings.size() - m_gprAllocator.freeRegisters().numberOfSetGPRs());
+
+        if (!preserved || preserved->isEmpty())
+            dataLogLnIf(verbose, "No preserved registers.");
+
+        // Print GPR bindings.
+        dataLogLnIf(verbose, "Current GPR bindings:");
+        for (unsigned i = 0; i < bindings.m_gprBindings.size(); ++i) {
+            Location locationFromBindings = Location::fromGPR(static_cast<GPRReg>(i)); 
+            Value value = bindings.m_gprBindings[i].toValue();
+            dataLogLnIf(verbose, i, " --> location ", locationFromBindings, " --> value ", value);
+            dataLogLnIf(verbose && !value.isNone(), "   --> with type ", value.type());
+            if (!value.isNone() && value.type() == TypeKind::I64) {
+                dataLogLnIf(verbose, "       Is I64 value in a GPR2 pair? ", locationOf(value).isGPR2());
+                dataLogLnIf(verbose && locationOf(value).isGPR2(), "       I64 value with GPR2 pair: gprhi=", locationOf(value).asGPRhi(), " gprlo=", locationOf(value).asGPRlo());
+            }
+        }
+
+        dataLogLnIf(verbose, "Searching for live bindings to spill:");
+        for (unsigned i = 0; i < bindings.m_gprBindings.size(); ++i) {
+            Value value = bindings.m_gprBindings[i].toValue();
+            // Only spill temp or locals holding Wasm integers.
+            if ((value.isTemp() || value.isLocal()) && ((value.type() == TypeKind::I32) || (value.type() == TypeKind::I64))) {
+                Location locationToFlush = Location::fromGPR(static_cast<GPRReg>(i));
+                //ASSERT(locationToFlush.isGPR());
+                if (!preserved || !preserved->contains(locationToFlush.asReg(), IgnoreVectors)) {
+                    dataLogLnIf(verbose, "Spilling value: ", value, "with type: ", value.type(), " in location: ", locationToFlush);
+                    dataLogLnIf(verbose, "locationOf(value) is GPR2? ", locationOf(value).isGPR2());
+                    if (locationOf(value).isGPR2()) {
+                        auto hi = locationOf(value).asGPRhi();
+                        auto lo = locationOf(value).asGPRlo();
+                        bool hiIsValid = m_gprAllocator.validRegisters().contains(hi, IgnoreVectors); 
+                        bool loIsValid = m_gprAllocator.validRegisters().contains(lo, IgnoreVectors); 
+                        flushValue(value);
+                        if (hiIsValid) {
+                            dataLogLnIf(verbose, "Freed gprhi = ", MacroAssembler::gprName(hi));
+                            --numberOfGPRsToSpill;
+                        } else {
+                            dataLogLnIf(verbose, "Invalid gprhi."); // Probably never happens.
+                        }
+                        if (loIsValid) {
+                            dataLogLnIf(verbose, "Freed gprlo = ", MacroAssembler::gprName(lo));
+                            --numberOfGPRsToSpill;
+                        } else {
+                            dataLogLnIf(verbose, "Invalid gprlo."); // Partially initialised I64 values. 
+                        }
+                    } else {
+                        RELEASE_ASSERT(value.type() == TypeKind::I32 && locationOf(value).isGPR());
+                        auto reg = locationOf(value).asGPR();
+                        if (m_gprAllocator.validRegisters().contains(reg, IgnoreVectors)) {
+                            flushValue(value);
+                            dataLogLnIf(verbose, "Freed gpr = ", MacroAssembler::gprName(reg));
+                            --numberOfGPRsToSpill;
+                        }
+                    }
+
+                }
+            }
+            if (numberOfGPRsToSpill <= 0 )
+                break;
+        }
+        dataLogLnIf(verbose && (numberOfGPRsToSpill > 0), "WARNING: No registers spilled!");
+    }
+}
+#endif
+
 void BBQJIT::emitTailCall(FunctionSpaceIndex functionIndexSpace, const TypeDefinition& signature, ArgumentList& arguments)
 {
     const auto& callingConvention = wasmCallingConvention();
@@ -4341,6 +4444,10 @@ void BBQJIT::emitTailCall(FunctionSpaceIndex functionIndexSpace, const TypeDefin
     auto preserved = callingConvention.argumentGPRs();
     if constexpr (isARM64E())
         preserved.add(callingConvention.prologueScratchGPRs[0], IgnoreVectors);
+
+#if USE(JSVALUE32_64)
+    flushLiveGPRsNotInPreserved(1, &preserved);
+#endif
     ScratchScope<1, 0> scratches(*this, WTFMove(preserved));
     GPRReg callerFramePointer = scratches.gpr(0);
     scratches.unbindPreserved();
@@ -4625,6 +4732,7 @@ void BBQJIT::emitIndirectTailCall(const char* opcode, const Value& callee, GPRRe
     preserved.add(importableFunction, IgnoreVectors);
     if constexpr (isARM64E())
         preserved.add(callingConvention.prologueScratchGPRs[0], IgnoreVectors);
+    flushLiveGPRsNotInPreserved(1, &preserved);
     ScratchScope<1, 0> scratches(*this, WTFMove(preserved));
     GPRReg callerFramePointer = scratches.gpr(0);
     scratches.unbindPreserved();
@@ -4713,6 +4821,7 @@ PartialResult WARN_UNUSED_RETURN BBQJIT::addCallIndirect(unsigned callProfileInd
         static_assert(GPRInfo::nonPreservedNonArgumentGPR0 == wasmScratchGPR);
 
         {
+            flushLiveGPRsNotInPreserved(2);
             ScratchScope<2, 0> scratches(*this);
 
             if (calleeIndex.isConst())
