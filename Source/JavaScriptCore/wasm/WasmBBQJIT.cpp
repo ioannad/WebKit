@@ -4315,6 +4315,42 @@ void BBQJIT::returnValuesFromCall(Vector<Value, N>& results, const FunctionSigna
     }
 }
 
+void BBQJIT::addLiveGPR2Pairs(RegisterSet& registers) {
+    // If a register in "registers" is part of a live GPR2 register pair,
+    // then add its pair to "registers".
+
+    const bool verbose = true;
+
+    if (registers.isEmpty())
+        return;
+
+    RegisterBindings bindings;
+    bindings.m_gprBindings = m_gprAllocator.copyBindings();
+
+    for (unsigned i=0; i < bindings.m_gprBindings.size(); ++i) {
+        RegisterBinding binding = bindings.m_gprBindings[i];
+        if (binding.isNone())
+            continue;
+        Value value = binding.toValue();
+        if (value.type() == TypeKind::I64) {
+            Location location = locationOf(value);
+            if (location.isGPR2()) {
+                auto hi = location.asGPRhi();
+                auto lo = location.asGPRlo();
+                bool containsGprhi = registers.contains(hi, IgnoreVectors);
+                bool containsGprlo = registers.contains(lo, IgnoreVectors);
+                if (containsGprhi && !containsGprlo) {
+                dataLogLnIf(verbose, "Add missing gprlo ", MacroAssembler::gprName(lo), " for included gprhi ", MacroAssembler::gprName(hi), " from live location ", location);
+                    registers.add(lo, IgnoreVectors);
+                } else if (containsGprlo && !containsGprhi) {
+                dataLogLnIf(verbose, "Add missing gprhi ", MacroAssembler::gprName(hi), " for included gprlo ", MacroAssembler::gprName(lo), " from live location ", location);
+                registers.add(hi, IgnoreVectors);
+                }
+            }
+        }
+    }
+}
+
 void BBQJIT::emitTailCall(FunctionSpaceIndex functionIndexSpace, const TypeDefinition& signature, ArgumentList& arguments)
 {
     const auto& callingConvention = wasmCallingConvention();
@@ -4341,6 +4377,7 @@ void BBQJIT::emitTailCall(FunctionSpaceIndex functionIndexSpace, const TypeDefin
     auto preserved = callingConvention.argumentGPRs();
     if constexpr (isARM64E())
         preserved.add(callingConvention.prologueScratchGPRs[0], IgnoreVectors);
+    addLiveGPR2Pairs(preserved);
     ScratchScope<1, 0> scratches(*this, WTFMove(preserved));
     GPRReg callerFramePointer = scratches.gpr(0);
     scratches.unbindPreserved();
