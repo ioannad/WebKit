@@ -232,14 +232,15 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
         RELEASE_ASSERT(callSiteIndexFromPC);
         CallSiteIndex callSiteIndex = callSiteIndexFromPC.value();
         m_frame.m_wasmCallSiteIndexBits = callSiteIndex.bits();
-
+        if (isOMGTailCallInlinedOrigin) {
+            dataLogLn("------ INLINED TAIL CALL ORIGIN FOUND ------");
+            return;
+        }
         auto codeOrigin = omgCallee.getCodeOrigin(callSiteIndex.bits(), depth, isInlined);
         auto indexOrName = omgCallee.getIndexOrName(codeOrigin);
         if (!isInlined)
             return;
-        if (isOMGTailCallInlinedOrigin) {
-            dataLogLn("------ INLINED TAIL CALL ORIGIN FOUND ------");
-        }
+
 
         // The callerFrame just needs to be non-null to indicate that we
         // haven't reached the last frame yet.
