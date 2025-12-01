@@ -237,9 +237,6 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
         auto indexOrName = omgCallee.getIndexOrName(codeOrigin);
         if (!isInlined)
             return;
-        if (isOMGTailCallInlinedOrigin) {
-            dataLogLn("------ INLINED TAIL CALL ORIGIN FOUND ------");
-        }
 
         // The callerFrame just needs to be non-null to indicate that we
         // haven't reached the last frame yet.
@@ -247,6 +244,11 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
         m_frame.m_wasmDistanceFromDeepestInlineFrame = depth + 1;
         m_frame.m_wasmFunctionIndexOrName = indexOrName;
         m_frame.m_wasmFunctionIndex = codeOrigin->functionIndex;
+
+        if (isOMGTailCallInlinedOrigin) {
+            dataLogLn("------ INLINED TAIL CALL ORIGIN FOUND ------");
+            readFrame(callFrame);
+        }
 #else
         UNUSED_VARIABLE(depth);
 #endif
